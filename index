@@ -1,0 +1,900 @@
+import React, { useState, useMemo } from 'react';
+import { 
+  LineChart, Line, BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
+} from 'recharts';
+import { 
+  Sparkles, X, Send, Filter, Search, Clock, DollarSign, Activity, FileSpreadsheet, UploadCloud, Layers, PieChart, TrendingUp, Download, CheckCircle2, Building2, UserCircle, GraduationCap
+} from 'lucide-react';
+
+// --- 1. ROBUST MOCK DATA & CONTEXTS ---
+const HOURLY_RATES = {
+  'Professor': 1035,
+  'Associate Prof.': 890,
+  'Assistant Prof.': 830,
+  'Lecturer': 755
+};
+
+const COLLEGES = {
+  'College of Engineering': ['Electrical Eng.', 'Computer Science', 'Mechanical Eng.'],
+  'College of Management': ['Information Mgmt.', 'Business Admin.', 'Finance'],
+  'College of Design': ['Industrial Design', 'Digital Media']
+};
+
+const DEPARTMENTS = Object.values(COLLEGES).flat();
+const ADMIN_ROLES = ['Univ. Admin', 'Academic Service', 'Standard Faculty'];
+const RANKS = ['Professor', 'Associate Prof.', 'Assistant Prof.', 'Lecturer'];
+const YEARS = [108, 109, 110, 111, 112, 113];
+
+// Generate consistent data reflecting YunTech academic structures
+const generateMockData = () => {
+  const data = [];
+  const lastNames = ['Chen', 'Lin', 'Huang', 'Chang', 'Li', 'Wang', 'Wu', 'Liu', 'Tsai', 'Yang', 'Hsu', 'Chang', 'Yeh', 'Chao'];
+  let idCounter = 1;
+
+  YEARS.forEach(year => {
+    lastNames.forEach((name, i) => {
+      let college, dept;
+      if (i < 5) {
+        college = 'College of Engineering';
+        dept = COLLEGES[college][i % 3];
+      } else if (i < 10) {
+        college = 'College of Management';
+        dept = COLLEGES[college][(i - 5) % 3];
+      } else {
+        college = 'College of Design';
+        dept = COLLEGES[college][(i - 10) % 2];
+      }
+
+      const rank = RANKS[i % 4];
+      const role = i === 0 || i === 5 ? 'Univ. Admin' : (i === 1 || i === 6 || i === 11 ? 'Academic Service' : 'Standard Faculty');
+      
+      let baseHours = 8;
+      if (role === 'Univ. Admin') baseHours += 5 + (year - 108) * 0.4;
+      if (role === 'Academic Service') baseHours += 2.5 + (year - 108) * 0.15;
+      
+      const actualHours = Math.max(6, Math.round(baseHours + (Math.sin(i + year) * 3)));
+      const requiredHours = 8;
+      const overloadHours = Math.max(0, actualHours - requiredHours);
+      const cost = overloadHours * HOURLY_RATES[rank] * 18; 
+
+      data.push({
+        id: `EMP-${1000 + idCounter++}`,
+        name: `${name} ${String.fromCharCode(65 + (i % 3))}.`,
+        year,
+        college,
+        department: dept,
+        rank,
+        adminRole: role,
+        requiredHours,
+        actualHours,
+        overloadHours,
+        cost
+      });
+    });
+  });
+  return data;
+};
+
+const rawData = generateMockData();
+
+export default function App() {
+  // --- STATE SYSTEM ---
+  const [selectedYears, setSelectedYears] = useState([...YEARS]);
+  const [selectedColleges, setSelectedColleges] = useState(Object.keys(COLLEGES));
+  const [selectedRoles, setSelectedRoles] = useState([...ADMIN_ROLES]);
+  const [selectedRanks, setSelectedRanks] = useState([...RANKS]);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  // UI Selection States
+  const [activeAnalysisDim, setActiveAnalysisDim] = useState('department'); 
+  const [selectedChartType, setSelectedChartType] = useState('bar'); 
+  const [selectedMetric, setSelectedMetric] = useState('cost'); 
+
+  // Active Modular Toggles (Decision Features)
+  const [activeModules, setActiveModules] = useState({
+    workload: true,
+    financial: true,
+    equity: true
+  });
+
+  // Modal / Overlay States (Export & Import feedback)
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportFormat, setExportFormat] = useState('xlsx');
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportSuccess, setExportSuccess] = useState(false);
+
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [simulatedFile, setSimulatedFile] = useState(null);
+  const [isImporting, setIsImporting] = useState(false);
+
+  // Chat Widget State
+  const [isChatOpen, setIsChatOpen] = useState(false);
+  const [chatMessages, setChatMessages] = useState([
+    { sender: 'ai', text: 'Welcome to the IR Data Assistant. I can help analyze department workloads, forecast MOE budget impacts, or assess structural equity. How can I assist you today?' }
+  ]);
+  const [chatInput, setChatInput] = useState('');
+
+  // --- DATA COMPUTATION ENGINE ---
+  const filteredData = useMemo(() => {
+    return rawData.filter(d => 
+      selectedYears.includes(d.year) &&
+      selectedColleges.includes(d.college) &&
+      selectedRoles.includes(d.adminRole) &&
+      selectedRanks.includes(d.rank) &&
+      (d.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+       d.department.toLowerCase().includes(searchQuery.toLowerCase()))
+    );
+  }, [selectedYears, selectedColleges, selectedRoles, selectedRanks, searchQuery]);
+
+  const stats = useMemo(() => {
+    if (!filteredData.length) return { avgLoad: 0, totalOverload: 0, totalCost: 0, gini: '0.000' };
+    
+    const totalHours = filteredData.reduce((sum, d) => sum + d.actualHours, 0);
+    const totalOverload = filteredData.reduce((sum, d) => sum + d.overloadHours, 0);
+    const totalCost = filteredData.reduce((sum, d) => sum + d.cost, 0);
+    const avgLoad = (totalHours / filteredData.length).toFixed(1);
+
+    // Dynamic Gini Coefficient (Real mathematical rendering)
+    const sortedLoads = [...filteredData].map(d => d.actualHours).sort((a, b) => a - b);
+    const n = sortedLoads.length;
+    let sumDiffs = 0;
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j < n; j++) {
+        sumDiffs += Math.abs(sortedLoads[i] - sortedLoads[j]);
+      }
+    }
+    const mean = totalHours / n;
+    const giniVal = mean > 0 ? (sumDiffs / (2 * n * n * mean)).toFixed(3) : '0.000';
+
+    return { avgLoad, totalOverload, totalCost, gini: giniVal, sortedLoads };
+  }, [filteredData]);
+
+  // Aggregated Visual Data Based on Category & Custom Dimensions
+  const visualizedData = useMemo(() => {
+    const groupKey = activeAnalysisDim; 
+    const groups = {};
+
+    filteredData.forEach(d => {
+      const key = d[groupKey];
+      if (!groups[key]) {
+        groups[key] = { name: key, totalCost: 0, totalOverload: 0, totalHours: 0, count: 0 };
+      }
+      groups[key].totalCost += d.cost;
+      groups[key].totalOverload += d.overloadHours;
+      groups[key].totalHours += d.actualHours;
+      groups[key].count += 1;
+    });
+
+    return Object.keys(groups).map(key => {
+      const g = groups[key];
+      return {
+        name: g.name,
+        'Cost (TWD)': g.totalCost,
+        'Overload Hours': g.totalOverload,
+        'Avg Hours': g.count > 0 ? parseFloat((g.totalHours / g.count).toFixed(1)) : 0,
+        count: g.count
+      };
+    });
+  }, [filteredData, activeAnalysisDim]);
+
+  // Map Metric Selector to Recharts Data Key
+  const activeMetricKey = useMemo(() => {
+    if (selectedMetric === 'cost') return 'Cost (TWD)';
+    if (selectedMetric === 'overloadHours') return 'Overload Hours';
+    return 'Avg Hours';
+  }, [selectedMetric]);
+
+  const activeMetricColor = useMemo(() => {
+    if (selectedMetric === 'cost') return '#1d4ed8'; // blue-700
+    if (selectedMetric === 'overloadHours') return '#be123c'; // rose-700
+    return '#0f766e'; // teal-700
+  }, [selectedMetric]);
+
+  // Custom Lorenz Curve coordinates generation
+  const lorenzCoordinates = useMemo(() => {
+    if (!filteredData.length) return [];
+    const sortedLoads = [...filteredData].map(d => d.actualHours).sort((a, b) => a - b);
+    const totalSum = sortedLoads.reduce((a, b) => a + b, 0);
+    const n = sortedLoads.length;
+
+    let cumulativeSum = 0;
+    const points = [{ pctPop: 0, pctWealth: 0 }];
+
+    sortedLoads.forEach((load, idx) => {
+      cumulativeSum += load;
+      points.push({
+        pctPop: Math.round(((idx + 1) / n) * 100),
+        pctWealth: Math.round((cumulativeSum / totalSum) * 100)
+      });
+    });
+    return points;
+  }, [filteredData]);
+
+  // --- ACTIONS SYSTEM ---
+  const handleExport = () => {
+    setIsExporting(true);
+    setExportSuccess(false);
+    setTimeout(() => {
+      setIsExporting(false);
+      setExportSuccess(true);
+    }, 1500);
+  };
+
+  const handleImportSimulate = (preset) => {
+    setIsImporting(true);
+    setTimeout(() => {
+      setIsImporting(false);
+      setSimulatedFile({ name: `${preset}_Faculty_Structure_113.xlsx`, size: '244 KB' });
+    }, 1200);
+  };
+
+  const handleSendMessage = (e) => {
+    e.preventDefault();
+    if (!chatInput.trim()) return;
+
+    setChatMessages(prev => [...prev, { sender: 'user', text: chatInput }]);
+    const query = chatInput.toLowerCase();
+    setChatInput('');
+
+    setTimeout(() => {
+      let reply = "Query received. Accessing departmental data models...";
+      if (query.includes('gini') || query.includes('equity') || query.includes('lorenz')) {
+        reply = `Equity Analysis: The current Gini coefficient is ${stats.gini}. A value below 0.25 typically denotes standard distribution. Current levels are driven primarily by overload concentrations among senior administrative positions.`;
+      } else if (query.includes('cost') || query.includes('overtime') || query.includes('twd')) {
+        reply = `Financial Assessment: Estimated compensation is NT$ ${stats.totalCost.toLocaleString()}. Applying structural adjustments to administrative workload policies could significantly optimize this budget.`;
+      } else if (query.includes('department') || query.includes('college')) {
+        reply = "Departmental Distribution: Computer Science and Information Management currently exhibit the highest absolute workload indices based on your selected filters.";
+      }
+      setChatMessages(prev => [...prev, { sender: 'ai', text: reply }]);
+    }, 800);
+  };
+
+  const toggleFilter = (list, setList, item) => {
+    if (list.includes(item)) {
+      setList(list.filter(i => i !== item));
+    } else {
+      setList([...list, item]);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-900 selection:bg-blue-100 selection:text-blue-900">
+      
+      {/* HEADER: Clean, Academic, Professional */}
+      <header className="bg-white border-b border-slate-200 px-6 py-4 flex flex-col lg:flex-row justify-between items-center space-y-4 lg:space-y-0 z-10 sticky top-0 shadow-sm">
+        <div className="flex items-center space-x-3.5">
+          <div className="bg-blue-700 p-2.5 rounded-lg text-white shadow-sm">
+            <Building2 size={24} />
+          </div>
+          <div>
+            <h1 className="text-xl font-bold text-slate-900 tracking-tight flex items-center">
+              YunTech Institutional Research
+              <span className="ml-3 bg-blue-50 text-blue-700 border border-blue-200 text-xs px-2.5 py-0.5 rounded-md font-semibold">Analytics Portal</span>
+            </h1>
+            <p className="text-sm text-slate-500 font-medium">Faculty Workload & Structural Analysis</p>
+          </div>
+        </div>
+
+        {/* Global Toolbar */}
+        <div className="flex flex-wrap items-center justify-center gap-3">
+          <button 
+            onClick={() => setShowImportModal(true)}
+            className="flex items-center space-x-2 bg-white hover:bg-slate-50 text-slate-700 px-4 py-2.5 rounded-md border border-slate-300 transition duration-200 font-semibold text-sm shadow-sm"
+          >
+            <UploadCloud size={16} className="text-blue-600" />
+            <span>{simulatedFile ? 'Dataset Loaded' : 'Import Data (.xlsx)'}</span>
+          </button>
+
+          <button 
+            onClick={() => setShowExportModal(true)}
+            className="flex items-center space-x-2 bg-blue-700 hover:bg-blue-800 text-white px-4 py-2.5 rounded-md transition duration-200 font-semibold text-sm shadow-sm"
+          >
+            <Download size={16} />
+            <span>Export Report</span>
+          </button>
+          
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+            <input 
+              type="text" 
+              placeholder="Search Faculty..." 
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-9 pr-4 py-2.5 bg-slate-100 border border-transparent hover:border-slate-300 rounded-md text-sm text-slate-900 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white w-48 lg:w-64 transition"
+            />
+          </div>
+        </div>
+      </header>
+
+      {/* CORE WORKSPACE */}
+      <div className="flex flex-1 overflow-hidden">
+        
+        {/* SIDEBAR: Crisp and clear filters */}
+        <aside className="w-80 bg-white border-r border-slate-200 p-5 overflow-y-auto hidden md:block z-0">
+          
+          {/* Analysis Workspace Features Selector */}
+          <div className="mb-8">
+            <div className="flex items-center mb-3 text-slate-800 font-bold border-b border-slate-100 pb-2">
+              <Layers size={18} className="mr-2 text-blue-600" /> Reporting Modules
+            </div>
+            <div className="space-y-2">
+              {[
+                { key: 'workload', label: 'Workload Overview', icon: TrendingUp },
+                { key: 'financial', label: 'Financial Impact Engine', icon: DollarSign },
+                { key: 'equity', label: 'Structural Equity (Gini)', icon: PieChart }
+              ].map(feat => (
+                <button
+                  key={feat.key}
+                  onClick={() => setActiveModules(p => ({ ...p, [feat.key]: !p[feat.key] }))}
+                  className={`w-full text-left px-3 py-2.5 rounded-md border transition-all duration-200 flex items-center justify-between ${
+                    activeModules[feat.key]
+                      ? 'bg-blue-50 border-blue-200 text-blue-800 font-semibold'
+                      : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  <div className="flex items-center space-x-2.5">
+                    <feat.icon size={16} className={activeModules[feat.key] ? 'text-blue-600' : 'text-slate-400'} />
+                    <span className="text-sm">{feat.label}</span>
+                  </div>
+                  <div className={`w-3 h-3 rounded border ${activeModules[feat.key] ? 'bg-blue-600 border-blue-600' : 'bg-white border-slate-300'}`}>
+                    {activeModules[feat.key] && <CheckCircle2 size={10} className="text-white mx-auto mt-[0.5px]" />}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex items-center mb-4 text-slate-800 font-bold border-b border-slate-100 pb-2">
+            <Filter size={18} className="mr-2 text-blue-600" /> Data Parameters
+          </div>
+
+          {/* College Level Filtering */}
+          <div className="mb-6">
+            <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Academic College</h3>
+            <div className="space-y-2.5">
+              {Object.keys(COLLEGES).map(collegeName => (
+                <label key={collegeName} className="flex items-center space-x-3 cursor-pointer group">
+                  <input 
+                    type="checkbox" 
+                    checked={selectedColleges.includes(collegeName)}
+                    onChange={() => toggleFilter(selectedColleges, setSelectedColleges, collegeName)}
+                    className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
+                  />
+                  <span className="text-sm text-slate-700 group-hover:text-slate-900">{collegeName.replace('College of ', '')}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {/* Academic Year Filter */}
+          <div className="mb-6">
+            <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Academic Year</h3>
+            <div className="grid grid-cols-3 gap-2">
+              {YEARS.map(yr => (
+                <button 
+                  key={yr}
+                  onClick={() => toggleFilter(selectedYears, setSelectedYears, yr)}
+                  className={`py-1.5 text-center text-sm rounded-md border transition-all ${
+                    selectedYears.includes(yr) 
+                      ? 'bg-blue-600 text-white border-blue-600 font-medium shadow-sm' 
+                      : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'
+                  }`}
+                >
+                  {yr}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Admin Role filter */}
+          <div className="mb-6">
+            <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Administrative Role</h3>
+            <div className="space-y-2.5">
+              {ADMIN_ROLES.map(role => (
+                <label key={role} className="flex items-center space-x-3 cursor-pointer group">
+                  <input 
+                    type="checkbox" 
+                    checked={selectedRoles.includes(role)}
+                    onChange={() => toggleFilter(selectedRoles, setSelectedRoles, role)}
+                    className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
+                  />
+                  <span className="text-sm text-slate-700 group-hover:text-slate-900">{role}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {/* Rank Filter */}
+          <div className="mb-4">
+            <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Academic Rank</h3>
+            <div className="space-y-2.5">
+              {RANKS.map(rank => (
+                <label key={rank} className="flex items-center space-x-3 cursor-pointer group">
+                  <input 
+                    type="checkbox" 
+                    checked={selectedRanks.includes(rank)}
+                    onChange={() => toggleFilter(selectedRanks, setSelectedRanks, rank)}
+                    className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
+                  />
+                  <span className="text-sm text-slate-700 group-hover:text-slate-900">{rank}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        </aside>
+
+        {/* WORKSPACE CENTRAL WORKBENCH */}
+        <main className="flex-1 p-6 overflow-y-auto">
+          
+          {/* KPI CARDS: Clean, white, highly readable */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+            <div className="bg-white rounded-xl p-5 border border-slate-200 flex items-center shadow-sm">
+              <div className="p-3 bg-blue-50 rounded-lg text-blue-600 mr-4">
+                <Clock size={22} />
+              </div>
+              <div>
+                <p className="text-xs text-slate-500 font-bold tracking-wider uppercase">Avg Workload</p>
+                <p className="text-2xl font-bold text-slate-900 mt-0.5">{stats.avgLoad} <span className="text-sm font-medium text-slate-500">hr/wk</span></p>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-xl p-5 border border-slate-200 flex items-center shadow-sm">
+              <div className="p-3 bg-rose-50 rounded-lg text-rose-600 mr-4">
+                <Activity size={22} />
+              </div>
+              <div>
+                <p className="text-xs text-slate-500 font-bold tracking-wider uppercase">Overload Volume</p>
+                <p className="text-2xl font-bold text-slate-900 mt-0.5">{stats.totalOverload} <span className="text-sm font-medium text-slate-500">hrs</span></p>
+              </div>
+            </div>
+
+            {activeModules.financial && (
+              <div className="bg-white rounded-xl p-5 border border-slate-200 flex items-center shadow-sm">
+                <div className="p-3 bg-emerald-50 rounded-lg text-emerald-600 mr-4">
+                  <DollarSign size={18} />
+                </div>
+                <div>
+                  <p className="text-xs text-slate-500 font-bold tracking-wider uppercase">Total Comp (TWD)</p>
+                  <p className="text-2xl font-bold text-slate-900 mt-0.5">${stats.totalCost.toLocaleString()}</p>
+                </div>
+              </div>
+            )}
+
+            {activeModules.equity && (
+              <div className="bg-white rounded-xl p-5 border border-slate-200 flex items-center shadow-sm">
+                <div className="p-3 bg-amber-50 rounded-lg text-amber-600 mr-4">
+                  <PieChart size={22} />
+                </div>
+                <div>
+                  <p className="text-xs text-slate-500 font-bold tracking-wider uppercase">Gini Index</p>
+                  <p className="text-2xl font-bold text-slate-900 mt-0.5">{stats.gini}</p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* DYNAMIC VISUALIZATION ENGINE */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+            
+            {/* The Custom Visualizer Configuration Workbench */}
+            <div className="lg:col-span-2 bg-white rounded-xl border border-slate-200 p-5 shadow-sm flex flex-col">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6 pb-4 border-b border-slate-100">
+                <div>
+                  <h2 className="text-base font-bold text-slate-900 flex items-center">
+                    <TrendingUp size={18} className="mr-2 text-blue-600" />
+                    Interactive Chart Engine
+                  </h2>
+                </div>
+
+                {/* VISUAL DESIGN TOOLBAR */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <select
+                    value={activeAnalysisDim}
+                    onChange={(e) => setActiveAnalysisDim(e.target.value)}
+                    className="bg-white border border-slate-300 text-xs text-slate-700 rounded-md px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none cursor-pointer font-medium shadow-sm"
+                  >
+                    <option value="department">By Department</option>
+                    <option value="college">By College</option>
+                    <option value="rank">By Academic Rank</option>
+                    <option value="adminRole">By Admin Position</option>
+                  </select>
+
+                  <select
+                    value={selectedMetric}
+                    onChange={(e) => setSelectedMetric(e.target.value)}
+                    className="bg-white border border-slate-300 text-xs text-slate-700 rounded-md px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none cursor-pointer font-medium shadow-sm"
+                  >
+                    <option value="cost">Financial Cost (TWD)</option>
+                    <option value="overloadHours">Overload Hours</option>
+                    <option value="actualHours">Actual Hours</option>
+                  </select>
+
+                  {/* Output Formats */}
+                  <div className="flex bg-slate-100 p-1 rounded-md border border-slate-200">
+                    {['bar', 'line', 'area'].map(type => (
+                      <button
+                        key={type}
+                        onClick={() => setSelectedChartType(type)}
+                        className={`text-xs font-semibold uppercase px-3 py-1 rounded transition duration-200 ${selectedChartType === type ? 'bg-white text-blue-700 shadow-sm border border-slate-200' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50 border border-transparent'}`}
+                      >
+                        {type}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Render Selected Dynamic Chart: Clean Professional Colors */}
+              <div className="h-72 w-full flex-1">
+                <ResponsiveContainer width="100%" height="100%">
+                  {selectedChartType === 'bar' ? (
+                    <BarChart data={visualizedData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+                      <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 11}} />
+                      <YAxis axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 11}} />
+                      <Tooltip 
+                        cursor={{fill: '#f1f5f9'}}
+                        contentStyle={{backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '8px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)', color: '#1e293b'}}
+                        labelStyle={{fontWeight: 'bold', color: '#0f172a', marginBottom: '4px'}}
+                      />
+                      <Bar dataKey={activeMetricKey} fill={activeMetricColor} radius={[4, 4, 0, 0]} barSize={40} />
+                    </BarChart>
+                  ) : selectedChartType === 'line' ? (
+                    <LineChart data={visualizedData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+                      <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 11}} />
+                      <YAxis axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 11}} />
+                      <Tooltip 
+                        contentStyle={{backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '8px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)', color: '#1e293b'}}
+                        labelStyle={{fontWeight: 'bold', color: '#0f172a', marginBottom: '4px'}}
+                      />
+                      <Line 
+                        type="monotone" 
+                        dataKey={activeMetricKey} 
+                        stroke={activeMetricColor} 
+                        strokeWidth={3} 
+                        dot={{ r: 4, strokeWidth: 2, fill: '#fff' }} 
+                        activeDot={{ r: 6, strokeWidth: 0 }}
+                      />
+                    </LineChart>
+                  ) : (
+                    <AreaChart data={visualizedData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+                      <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 11}} />
+                      <YAxis axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 11}} />
+                      <Tooltip 
+                        contentStyle={{backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '8px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)', color: '#1e293b'}}
+                        labelStyle={{fontWeight: 'bold', color: '#0f172a', marginBottom: '4px'}}
+                      />
+                      <Area 
+                        type="monotone" 
+                        dataKey={activeMetricKey} 
+                        stroke={activeMetricColor} 
+                        strokeWidth={2} 
+                        fill={activeMetricColor}
+                        fillOpacity={0.1} 
+                      />
+                    </AreaChart>
+                  )}
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            {/* Lorenz Equity Distribution Panel */}
+            <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm flex flex-col justify-between">
+              <div>
+                <h3 className="text-base font-bold text-slate-900 flex items-center mb-1">
+                  <PieChart size={18} className="mr-2 text-blue-600" />
+                  Lorenz Curve
+                </h3>
+                <p className="text-xs text-slate-500 mb-4">Distribution equity of active selection.</p>
+              </div>
+
+              {/* LIVE Lorenz SVG Generator: Clean light theme */}
+              <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 relative h-48 flex items-center justify-center">
+                <svg viewBox="0 0 100 100" className="w-full h-full overflow-visible">
+                  {/* Grid Lines */}
+                  <line x1="0" y1="0" x2="100" y2="0" stroke="#e2e8f0" strokeWidth="1" />
+                  <line x1="0" y1="50" x2="100" y2="50" stroke="#e2e8f0" strokeWidth="1" />
+                  <line x1="50" y1="0" x2="50" y2="100" stroke="#e2e8f0" strokeWidth="1" />
+                  <line x1="100" y1="0" x2="100" y2="100" stroke="#e2e8f0" strokeWidth="1" />
+
+                  {/* Absolute Equity Line */}
+                  <line x1="0" y1="100" x2="100" y2="0" stroke="#94a3b8" strokeWidth="1.5" strokeDasharray="4,4" />
+                  
+                  {/* Live Lorenz Curve Path */}
+                  <path
+                    d={`M 0 100 ${lorenzCoordinates.map(pt => `L ${pt.pctPop} ${100 - pt.pctWealth}`).join(' ')}`}
+                    fill="rgba(37, 99, 235, 0.05)"
+                    stroke="#2563eb"
+                    strokeWidth="2.5"
+                  />
+
+                  {/* Nodes & Marks */}
+                  <text x="3" y="10" fill="#64748b" className="text-[7px] font-medium">100% Load</text>
+                  <text x="73" y="97" fill="#64748b" className="text-[7px] font-medium">100% Pop</text>
+                </svg>
+              </div>
+
+              <div className="mt-4 pt-4 border-t border-slate-100 flex items-center justify-between">
+                <div>
+                  <p className="text-[10px] text-slate-500 font-bold tracking-wider uppercase">Verdict</p>
+                  <p className="text-sm font-semibold text-slate-800 mt-0.5">
+                    {parseFloat(stats.gini) < 0.25 ? 'Standard Distribution' : 'Requires Audit'}
+                  </p>
+                </div>
+                <div className="bg-amber-100 text-amber-800 px-3 py-1.5 rounded-md text-sm font-bold border border-amber-200">
+                  {stats.gini}
+                </div>
+              </div>
+            </div>
+
+          </div>
+
+          {/* INTEGRATED DATA EXPLORER & AUDITING */}
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="p-5 border-b border-slate-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-slate-50">
+              <div>
+                <h2 className="text-base font-bold text-slate-900 flex items-center">
+                  <FileSpreadsheet size={18} className="mr-2 text-blue-600" />
+                  Detailed Data Matrix
+                </h2>
+              </div>
+              <span className="text-xs bg-white text-slate-600 border border-slate-300 px-3 py-1.5 rounded-md font-semibold shadow-sm">{filteredData.length} active records</span>
+            </div>
+            
+            <div className="overflow-x-auto h-80">
+              <table className="w-full text-left text-sm text-slate-700 border-collapse">
+                <thead className="bg-white text-slate-500 sticky top-0 border-b border-slate-200 z-10 shadow-sm">
+                  <tr>
+                    <th className="px-6 py-3 font-semibold text-xs uppercase tracking-wider">Year</th>
+                    <th className="px-6 py-3 font-semibold text-xs uppercase tracking-wider">Name</th>
+                    <th className="px-6 py-3 font-semibold text-xs uppercase tracking-wider">College</th>
+                    <th className="px-6 py-3 font-semibold text-xs uppercase tracking-wider">Department</th>
+                    <th className="px-6 py-3 font-semibold text-xs uppercase tracking-wider">Rank</th>
+                    <th className="px-6 py-3 font-semibold text-xs uppercase tracking-wider">Position</th>
+                    <th className="px-6 py-3 font-semibold text-xs uppercase tracking-wider text-right">Hours</th>
+                    <th className="px-6 py-3 font-semibold text-xs uppercase tracking-wider text-right">Overload</th>
+                    <th className="px-6 py-3 font-semibold text-xs uppercase tracking-wider text-right">Cost (TWD)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 bg-white">
+                  {filteredData.map((row, idx) => (
+                    <tr key={`${row.id}-${idx}`} className="hover:bg-slate-50 transition-colors duration-150">
+                      <td className="px-6 py-3 text-slate-500">{row.year}</td>
+                      <td className="px-6 py-3 font-bold text-slate-900 flex items-center space-x-2">
+                        <div className="w-7 h-7 bg-blue-100 rounded-full flex items-center justify-center text-xs font-bold text-blue-700">
+                          {row.name.charAt(0)}
+                        </div>
+                        <span>{row.name}</span>
+                      </td>
+                      <td className="px-6 py-3 text-slate-600 text-xs">{row.college.replace('College of ', '')}</td>
+                      <td className="px-6 py-3 text-slate-600 text-xs">{row.department}</td>
+                      <td className="px-6 py-3 text-slate-600 text-xs">{row.rank}</td>
+                      <td className="px-6 py-3">
+                        <span className={`px-2.5 py-1 rounded text-[11px] font-bold border ${
+                          row.adminRole === 'Univ. Admin' ? 'bg-rose-50 text-rose-700 border-rose-200' : 
+                          row.adminRole === 'Academic Service' ? 'bg-amber-50 text-amber-700 border-amber-200' : 
+                          'bg-slate-100 text-slate-600 border-slate-200'
+                        }`}>
+                          {row.adminRole}
+                        </span>
+                      </td>
+                      <td className="px-6 py-3 text-right font-semibold text-slate-800">{row.actualHours}</td>
+                      <td className="px-6 py-3 text-right font-bold text-rose-600">{row.overloadHours > 0 ? `+${row.overloadHours}` : '-'}</td>
+                      <td className="px-6 py-3 text-right text-emerald-700 font-semibold">${row.cost.toLocaleString()}</td>
+                    </tr>
+                  ))}
+                  {filteredData.length === 0 && (
+                    <tr>
+                      <td colSpan="9" className="px-6 py-12 text-center text-slate-500 font-medium text-sm">
+                        No records match the current filter parameters.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </main>
+      </div>
+
+      {/* --- FLOATING AI CONTEXT-DRIVEN ADVISORY WIDGET --- */}
+      <div className="fixed bottom-6 right-6 z-50">
+        {isChatOpen && (
+          <div className="absolute bottom-16 right-0 w-80 bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col h-96 animate-slide-up">
+            {/* AI HEADER */}
+            <div className="bg-blue-700 p-4 text-white flex justify-between items-center">
+              <div className="flex items-center space-x-2">
+                <Sparkles size={18} className="text-blue-200" />
+                <div>
+                  <span className="font-bold text-sm block">IR AI Assistant</span>
+                </div>
+              </div>
+              <button onClick={() => setIsChatOpen(false)} className="text-blue-200 hover:text-white p-1 rounded hover:bg-blue-600 transition">
+                <X size={18} />
+              </button>
+            </div>
+            
+            {/* MSG STREAM */}
+            <div className="flex-1 p-4 overflow-y-auto bg-slate-50 space-y-4">
+              {chatMessages.map((msg, i) => (
+                <div key={i} className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div className={`max-w-[85%] rounded-xl p-3 text-sm shadow-sm border ${
+                    msg.sender === 'user' 
+                      ? 'bg-blue-600 text-white border-blue-700 rounded-br-none' 
+                      : 'bg-white text-slate-700 border-slate-200 rounded-bl-none'
+                  }`}>
+                    {msg.text}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* FOOTER W/ QUICK SHORTCUTS */}
+            <div className="p-3 bg-white border-t border-slate-200">
+              {chatMessages.length === 1 && (
+                <div className="flex gap-2 overflow-x-auto pb-2 mb-2 scrollbar-hide">
+                  <button onClick={() => setChatInput('Analyze Gini Equity')} className="whitespace-nowrap text-xs font-medium bg-slate-100 text-slate-700 border border-slate-200 rounded-md px-3 py-1.5 hover:bg-slate-200 transition">Equity Audit</button>
+                  <button onClick={() => setChatInput('Identify top department workloads')} className="whitespace-nowrap text-xs font-medium bg-slate-100 text-slate-700 border border-slate-200 rounded-md px-3 py-1.5 hover:bg-slate-200 transition">Workload Hotspots</button>
+                </div>
+              )}
+              <form onSubmit={handleSendMessage} className="flex items-center space-x-2">
+                <input 
+                  type="text" 
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  placeholder="Ask a question..." 
+                  className="flex-1 bg-slate-100 border border-slate-300 rounded-md px-3 py-2 text-sm text-slate-900 placeholder-slate-500 focus:ring-2 focus:ring-blue-500 focus:bg-white outline-none"
+                />
+                <button type="submit" disabled={!chatInput.trim()} className="p-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 transition shadow-sm">
+                  <Send size={16} />
+                </button>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* FAB Sparkle Switch */}
+        <button 
+          onClick={() => setIsChatOpen(!isChatOpen)}
+          className={`w-14 h-14 rounded-full flex items-center justify-center shadow-lg transition-transform hover:scale-105 active:scale-95 z-10 ${
+            isChatOpen 
+              ? 'bg-slate-800 text-white' 
+              : 'bg-blue-700 text-white hover:bg-blue-800 border-2 border-white'
+          }`}
+        >
+          {isChatOpen ? <X size={24} /> : <Sparkles size={24} />}
+        </button>
+      </div>
+
+      {/* --- IMPORT MODAL --- */}
+      {showImportModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 transition-all">
+          <div className="bg-white border border-slate-200 rounded-xl max-w-md w-full p-6 shadow-xl relative">
+            <button onClick={() => setShowImportModal(false)} className="absolute right-4 top-4 text-slate-400 hover:text-slate-600 p-1.5 rounded-md hover:bg-slate-100 transition">
+              <X size={20} />
+            </button>
+            <h3 className="text-lg font-bold text-slate-900 mb-2 flex items-center">
+              <UploadCloud className="mr-2 text-blue-600" size={20} />
+              Import Dataset (.xlsx)
+            </h3>
+            <p className="text-sm text-slate-500 mb-6">
+              Upload institutional data files. The system will map standard columns (Rank, Department, Load).
+            </p>
+
+            <div className="border-2 border-dashed border-slate-300 rounded-xl p-8 text-center bg-slate-50 hover:bg-blue-50 hover:border-blue-400 transition cursor-pointer mb-6">
+              <UploadCloud size={32} className="mx-auto text-blue-500 mb-3" />
+              <p className="text-sm text-slate-700 font-semibold mb-1">Drag and drop file here</p>
+              <p className="text-xs text-slate-500">Supports Excel and CSV formats</p>
+            </div>
+
+            <div className="space-y-3">
+              <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Demo Presets</p>
+              <div className="grid grid-cols-2 gap-3">
+                <button 
+                  onClick={() => handleImportSimulate('YunTech_Engineering')}
+                  className="bg-white hover:bg-slate-50 border border-slate-200 rounded-lg p-3 text-left transition shadow-sm"
+                >
+                  <span className="font-bold block text-slate-800 text-sm">Engineering</span>
+                  <span className="text-xs text-slate-500">AY 112 Profile</span>
+                </button>
+                <button 
+                  onClick={() => handleImportSimulate('Management_YunTech')}
+                  className="bg-white hover:bg-slate-50 border border-slate-200 rounded-lg p-3 text-left transition shadow-sm"
+                >
+                  <span className="font-bold block text-slate-800 text-sm">Management</span>
+                  <span className="text-xs text-slate-500">AY 113 Profile</span>
+                </button>
+              </div>
+            </div>
+
+            {isImporting && (
+              <div className="mt-5 p-3 bg-blue-50 rounded-lg border border-blue-100 flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+                  <span className="text-sm text-blue-800 font-medium">Processing standard mappings...</span>
+                </div>
+              </div>
+            )}
+
+            {simulatedFile && !isImporting && (
+              <div className="mt-5 p-3 bg-emerald-50 rounded-lg border border-emerald-200 flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <CheckCircle2 size={18} className="text-emerald-600" />
+                  <span className="text-sm text-emerald-800 font-bold">{simulatedFile.name} loaded.</span>
+                </div>
+                <button onClick={() => setSimulatedFile(null)} className="text-emerald-600 hover:text-emerald-800">
+                  <X size={16} />
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* --- EXPORT MODAL --- */}
+      {showExportModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 transition-all">
+          <div className="bg-white border border-slate-200 rounded-xl max-w-md w-full p-6 shadow-xl relative">
+            <button onClick={() => setShowExportModal(false)} className="absolute right-4 top-4 text-slate-400 hover:text-slate-600 p-1.5 rounded-md hover:bg-slate-100 transition">
+              <X size={20} />
+            </button>
+            <h3 className="text-lg font-bold text-slate-900 mb-2 flex items-center">
+              <Download className="mr-2 text-blue-600" size={20} />
+              Export Options
+            </h3>
+            <p className="text-sm text-slate-500 mb-6">
+              Generate reports based on the current selection of {filteredData.length} records.
+            </p>
+
+            <div className="grid grid-cols-3 gap-3 mb-6">
+              {[
+                { format: 'xlsx', label: 'Excel', icon: FileSpreadsheet, sub: 'Data Matrix' },
+                { format: 'pdf', label: 'PDF', icon: FileText, sub: 'Formatted Doc' },
+                { format: 'png', label: 'Images', icon: Activity, sub: 'High-Res Charts' }
+              ].map(opt => (
+                <button
+                  key={opt.format}
+                  onClick={() => setExportFormat(opt.format)}
+                  className={`border p-4 rounded-xl text-center transition flex flex-col items-center ${
+                    exportFormat === opt.format 
+                      ? 'bg-blue-50 border-blue-600 text-blue-700 shadow-sm' 
+                      : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  <opt.icon size={24} className="mb-2" />
+                  <span className="font-bold text-sm block">{opt.label}</span>
+                  <span className="text-xs text-slate-500 mt-1">{opt.sub}</span>
+                </button>
+              ))}
+            </div>
+
+            <button 
+              onClick={handleExport}
+              disabled={isExporting}
+              className="w-full bg-blue-700 hover:bg-blue-800 text-white font-bold py-3 rounded-lg text-sm transition shadow-sm flex items-center justify-center space-x-2"
+            >
+              {isExporting ? (
+                <>
+                  <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                  <span>Generating Output...</span>
+                </>
+              ) : (
+                <span>Download File</span>
+              )}
+            </button>
+
+            {exportSuccess && !isExporting && (
+              <div className="mt-4 p-3 bg-emerald-50 rounded-lg border border-emerald-200 flex items-center space-x-2 text-emerald-800 text-sm font-medium">
+                <CheckCircle2 size={18} />
+                <span>Export generated successfully!</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+    </div>
+  );
+}
